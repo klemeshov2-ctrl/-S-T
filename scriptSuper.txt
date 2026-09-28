@@ -1,0 +1,1328 @@
+//@version=6
+indicator("S&T Premium Ultimate Super Indicator [S&T Premium v6]", "S&T Super", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+
+// ==========================================================
+// ⚙️ ГРУППА 0: СИСТЕМА ОПТИМАЛЬНЫХ ПРЕСЕТОВ S&T (GOLD & BTC)
+// ==========================================================
+gp_presets   = "⚙️ Оптимальные Пресеты S&T"
+preset_sel   = input.string("${j.selectedPreset||"По умолчанию (Ручные настройки)"}", "Выбрать Оптимальный Пресет", options=[
+     "По умолчанию (Ручные настройки)",
+     "Золото (XAUUSD) - 15 мин Оптимальный",
+     "Биткоин (BTCUSD) - 15 мин Оптимальный",
+     "1 мин - Сверхбыстрый скальпинг",
+     "5 мин - Быстрый скальпинг",
+     "15 мин - Оптимальный Интрадей",
+     "1 час - Часовой тренд",
+     "4 часа - Свинг-трейдинг",
+     "1 день - Инвестиционный/Дневной"
+     ], group=gp_presets, tooltip="Автоматически перезаписывает все параметры под выбранный стиль торговли, актив и таймфрейм.")
+
+// ==========================================================
+// 📱 ГРУППА 1: НАСТРОЙКИ МОБИЛЬНОЙ ОПТИМИЗАЦИИ И ИНТЕРФЕЙСА
+// ==========================================================
+gp_ui        = "📱 Настройки Мобильной Оптимизации и Интерфейса"
+show_tables  = input.bool(${j.showDashboard??j.showDashboardTable!==!1}, "Показывать инфо-панель S&T", group=gp_ui)
+compact_mode = input.bool(true, "Компактный режим панели (для мобильных)", group=gp_ui)
+table_pos    = input.string("Нижний левый", "Позиция инфо-панели", options=["Верхний левый", "Верхний правый", "Нижний левый", "Нижний правый"], group=gp_ui)
+text_sz_opt  = input.string("Микро", "Размер шрифта на графике", options=["Микро", "Маленький", "Обычный", "Крупный"], group=gp_ui)
+label_offset = input.int(15, "Смещение меток вправо (бары)", minval=2, maxval=50, group=gp_ui)
+line_len     = input.int(25, "Длина уровней Фибоначчи (бары)", minval=5, maxval=100, group=gp_ui)
+clean_ob     = input.bool(true, "Скрывать протестированные (mitigated) OB/FVG", group=gp_ui)
+show_sweeps  = input.bool(true, "Показывать надписи SWEEP на графике", group=gp_ui)
+
+// ==========================================================
+// 📊 ГРУППА 2: АНАЛИЗ ДЕЛЬТЫ ОБЪЕМА (Volume Delta & MTF)
+// ==========================================================
+gp_delta     = "📊 Volume Delta & MTF Настройки"
+use_mtf      = input.bool(true, "Включить MTF Анализ дельты", group=gp_delta)
+mtf_tf       = input.timeframe("5", "Таймфрейм для MTF (5TF)", group=gp_delta)
+vd_smoothing = input.int(14, "Сглаживание дельты (EMA)", minval=1, group=gp_delta)
+extreme_th   = input.float(1, "Порог аномальной дельты (STD)", minval=0.5, step=0.1, group=gp_delta)
+
+// ==========================================================
+// 🌐 ГРУППА МАКРО-РЫНКОВ (DXY & BRENT OIL)
+// ==========================================================
+gp_macro     = "🌐 Внешние Макро-Рынки (DXY & Нефть)"
+dxy_symbol   = input.symbol("DXY", "Символ Индекса Доллара США", group=gp_macro)
+oil_symbol   = input.symbol("UKOIL", "Символ Нефти Brent", group=gp_macro)
+
+// ==========================================================
+// 🏛️ ГРУППА 3: СТРУКТУРА РЫНКА (SMC & S&R Horizons)
+// ==========================================================
+gp_smc       = "🏛️ SMC & S&R Настройки"
+lb_st        = input.int(${j.orderBlockPeriod??j.structureLookback??4}, "Период Pivot ST (Краткосрочный)", minval=2, maxval=10, group=gp_smc)
+lb_it        = input.int(12, "Период Pivot IT (Среднесрочный)", minval=5, maxval=20, group=gp_smc)
+lb_lt        = input.int(28, "Период Pivot LT (Долгосрочный)", minval=15, maxval=50, group=gp_smc)
+show_bos     = input.bool(true, "Показывать BOS / CHoCH", group=gp_smc)
+show_ob      = input.bool(${j.showOrderBlocks??j.showOB!==!1}, "Показывать Блоки Ордеров (OB)", group=gp_smc)
+show_fvg     = input.bool(${j.showFvg??j.showFVG!==!1}, "Показывать Имбалансы (FVG)", group=gp_smc)
+ob_limit     = input.int(3, "Макс. активных блоков OB", minval=1, maxval=20, group=gp_smc)
+show_sr_zones= input.bool(true, "Показывать институциональные зоны S&R", group=gp_smc)
+max_sr_boxes = input.int(3, "Макс. активных зон на горизонт", minval=1, maxval=10, group=gp_smc)
+merge_sr     = input.bool(true, "Объединять накладывающиеся зоны S&R", group=gp_smc)
+merge_dist   = input.float(0.65, "Дистанция объединения (ATR)", minval=0.1, maxval=2.0, step=0.05, group=gp_smc)
+
+// ==========================================================
+// 🎯 ГРУППА 4: ФИБОНАЧЧИ И ЗОНЫ ВЕРОЯТНОСТЕЙ
+// ==========================================================
+gp_fib       = "🎯 Fibonacci & Probability Levels (Premium)"
+fib_period   = input.int(15, "Период свингов для Фибо", minval=5, group=gp_fib)
+show_fib_ext = input.bool(true, "Показывать Фибо-расширения (Take Profit)", group=gp_fib)
+show_probs   = input.bool(true, "Показывать вероятности отскока (%)", group=gp_fib)
+dir_mode     = input.string("Авто-Структура", "Режим определения тренда", options=["Авто-Структура", "RSI фильтр", "Только Вверх", "Только Вниз"], group=gp_fib)
+show_reversal = input.bool(true, "Показывать зоны разворота (Reversal Zones)", group=gp_fib)
+show_forecast = input.bool(${j.showWaveForecast??j.showPriceForecast!==!1}, "Показывать волновой прогноз цены", group=gp_fib)
+show_alt_wave = input.bool(true, "Показывать альтернативную линию пробоя SL", group=gp_fib)
+fc_lookback   = input.int(30, "Глубина волнового прогноза", minval=10, maxval=50, group=gp_fib)
+fc_target_mult = input.float(${j.forecastTargetMult||1}, "Множитель TP волнового прогноза", minval=0.5, maxval=2.5, step=0.1, group=gp_fib)
+fc_post_target = input.bool(true, "Показывать сценарий ретеста после цели (Leg 4)", group=gp_fib)
+fc_model_acc   = input.string("SMC-Balanced", "Точность волнового прогноза", options=["SMC-Balanced", "Conservative", "Aggressive"], group=gp_fib)
+fc_use_mtf    = input.bool(true, "Учитывать старшие таймфреймы в прогнозе", group=gp_fib)
+fc_mtf_tf     = input.timeframe("60", "Старший ТФ для прогнозирования", group=gp_fib)
+
+// ==========================================================
+// ⚡ ГРУППА 5: ТОРГОВЫЕ СИГНАЛЫ (LONG / SHORT Signals)
+// ==========================================================
+gp_sig       = "⚡ Торговые Сигналы S&T"
+show_signals = input.bool(${j.showMlSignals??j.mlEnabled!==!1}, "Отображать сигналы Long/Short", group=gp_sig)
+signal_mode  = input.string("${T}", "Режим генерации сигналов", options=["Агрессивный", "Консервативный", "Сверх-Надежный"], group=gp_sig)
+
+// ==========================================================
+// 🎨 ГРУППА 6: ЦВЕТОВАЯ ТЕМАТИЧЕСКАЯ ПАЛИТРА
+// ==========================================================
+gp_colors    = "🎨 Тематическое Оформление S&T"
+theme_mode   = input.string("Золотой Слейт", "Цветовая тема", options=["Золотой Слейт", "Океанский Синий", "Киберпанк"], group=gp_colors)
+
+// ==========================================================
+// 📈 ГРУППА 7: СИСТЕМА ДИНАМИЧЕСКИХ ЛИНИЙ ТРЕНДА S&T
+// ==========================================================
+gp_trend     = "📈 Система Динамических Линий Тренда S&T"
+show_trend_l = input.bool(true, "Показывать линию тренда S&T", group=gp_trend)
+trend_type   = input.string("EMA", "Метод расчета тренда", options=["EMA", "SMA", "HMA", "WMA"], group=gp_trend)
+trend_len    = input.int(200, "Период линии тренда", minval=10, maxval=500, group=gp_trend)
+
+// --- ДИНАМИЧЕСКИЙ РАСЧЕТ ПАРАМЕТРОВ ПО ПРЕСЕТАМ S&T ---
+var int final_lb_st = na
+var int final_lb_it = na
+var int final_lb_lt = na
+var int final_fib_period = na
+var float final_extreme_th = na
+var string final_sig_mode = na
+var float final_fc_target_mult = na
+var int final_fc_lookback = na
+
+if preset_sel == "Золото (XAUUSD) - 15 мин Оптимальный"
+    final_lb_st := 3
+    final_lb_it := 8
+    final_lb_lt := 20
+    final_fib_period := 50
+    final_extreme_th := 1.2
+    final_sig_mode := "Консервативный"
+    final_fc_target_mult := 1.1
+    final_fc_lookback := 24
+else if preset_sel == "Биткоин (BTCUSD) - 15 мин Оптимальный"
+    final_lb_st := 4
+    final_lb_it := 12
+    final_lb_lt := 28
+    final_fib_period := 80
+    final_extreme_th := 1.5
+    final_sig_mode := "Консервативный"
+    final_fc_target_mult := 1.3
+    final_fc_lookback := 30
+else if preset_sel == "1 мин - Сверхбыстрый скальпинг"
+    final_lb_st := 2
+    final_lb_it := 6
+    final_lb_lt := 16
+    final_fib_period := 30
+    final_extreme_th := 1.0
+    final_sig_mode := "Агрессивный"
+    final_fc_target_mult := 0.75
+    final_fc_lookback := 15
+else if preset_sel == "5 мин - Быстрый скальпинг"
+    final_lb_st := 3
+    final_lb_it := 8
+    final_lb_lt := 20
+    final_fib_period := 45
+    final_extreme_th := 1.3
+    final_sig_mode := "Агрессивный"
+    final_fc_target_mult := 0.9
+    final_fc_lookback := 20
+else if preset_sel == "15 мин - Оптимальный Интрадей"
+    final_lb_st := 4
+    final_lb_it := 11
+    final_lb_lt := 26
+    final_fib_period := 75
+    final_extreme_th := 1.5
+    final_sig_mode := "Консервативный"
+    final_fc_target_mult := 1.15
+    final_fc_lookback := 28
+else if preset_sel == "1 час - Часовой тренд"
+    final_lb_st := 5
+    final_lb_it := 13
+    final_lb_lt := 32
+    final_fib_period := 95
+    final_extreme_th := 1.7
+    final_sig_mode := "Консервативный"
+    final_fc_target_mult := 1.35
+    final_fc_lookback := 35
+else if preset_sel == "4 часа - Свинг-трейдинг"
+    final_lb_st := 6
+    final_lb_it := 15
+    final_lb_lt := 36
+    final_fib_period := 120
+    final_extreme_th := 1.9
+    final_sig_mode := "Сверх-Надежный"
+    final_fc_target_mult := 1.5
+    final_fc_lookback := 40
+else if preset_sel == "1 день - Инвестиционный/Дневной"
+    final_lb_st := 7
+    final_lb_it := 18
+    final_lb_lt := 42
+    final_fib_period := 140
+    final_extreme_th := 2.2
+    final_sig_mode := "Сверх-Надежный"
+    final_fc_target_mult := 1.8
+    final_fc_lookback := 45
+else
+    final_lb_st := lb_st
+    final_lb_it := lb_it
+    final_lb_lt := lb_lt
+    final_fib_period := fib_period
+    final_extreme_th := extreme_th
+    final_sig_mode := signal_mode
+    final_fc_target_mult := fc_target_mult
+    final_fc_lookback := fc_lookback
+
+get_text_size(opt) =>
+    opt == "Микро" ? size.tiny : opt == "Маленький" ? size.small : opt == "Обычный" ? size.normal : opt == "Крупный" ? size.large : size.small
+
+get_table_pos(pos) =>
+    pos == "Верхний левый" ? position.top_left : pos == "Верхний правый" ? position.top_right : pos == "Нижний левый" ? position.bottom_left : pos == "Нижний правый" ? position.bottom_right : position.bottom_right
+
+val_dot(tf) =>
+    request.security(syminfo.tickerid, tf, ta.ema(close, 9) > ta.ema(close, 21))
+
+dot_5   = val_dot("5") ? "🟢" : "🔴"
+dot_15  = val_dot("15") ? "🟢" : "🔴"
+dot_60  = val_dot("60") ? "🟢" : "🔴"
+dot_240 = val_dot("240") ? "🟢" : "🔴"
+dot_D   = val_dot("D") ? "🟢" : "🔴"
+dot_2D  = val_dot("2D") ? "🟢" : "🔴"
+dot_W   = val_dot("W") ? "🟢" : "🔴"
+
+c_bull       = theme_mode == "Золотой Слейт" ? #fbbf24 : (theme_mode == "Океанский Синий" ? #06b6d4 : #00ffcc)
+c_bear       = theme_mode == "Золотой Слейт" ? #ef4444 : (theme_mode == "Океанский Синий" ? #f43f5e : #ff007f)
+c_extreme_bear = theme_mode == "Золотой Слейт" ? #d946ef : (theme_mode == "Океанский Синий" ? #d946ef : #ff007f)
+c_neutral    = theme_mode == "Золотой Слейт" ? #94a3b8 : (theme_mode == "Океанский Синий" ? #64748b : #475569)
+c_bg_panel   = theme_mode == "Золотой Слейт" ? color.new(#0f172a, 15) : (theme_mode == "Океанский Синий" ? color.new(#082f49, 15) : color.new(#1e1b4b, 15))
+c_text_panel = theme_mode == "Золотой Слейт" ? #f8fafc : (theme_mode == "Океанский Синий" ? #f0fdfa : #fdf4ff)
+
+calc_ma(src, length, type) =>
+    type == "EMA" ? ta.ema(src, length) : type == "WMA" ? ta.wma(src, length) : type == "HMA" ? ta.hma(src, length) : ta.sma(src, length)
+
+trend_line_val = calc_ma(close, trend_len, trend_type)
+
+calc_delta() =>
+    candle_range = high - low
+    buying_volume = volume * (candle_range == 0 ? 0.5 : (close >= open ? (close - open + (high - close) * 0.5 + (open - low) * 0.5) : ((high - open) * 0.5 + (close - low) * 0.5)) / candle_range)
+    selling_volume = volume - buying_volume
+    buying_volume - selling_volume
+
+delta_current = calc_delta()
+delta_smoothed = ta.ema(delta_current, vd_smoothing)
+delta_std = ta.stdev(delta_current, 20)
+is_extreme_delta = math.abs(delta_current) > delta_std * final_extreme_th
+
+delta_mtf = request.security(syminfo.tickerid, use_mtf ? mtf_tf : timeframe.period, calc_delta())
+delta_mtf_smooth = request.security(syminfo.tickerid, use_mtf ? mtf_tf : timeframe.period, ta.ema(calc_delta(), vd_smoothing))
+
+barcolor(is_extreme_delta ? (delta_current > 0 ? color.new(c_bull, 10) : color.new(c_extreme_bear, 10)) : na)
+
+sh_st = ta.pivothigh(high, final_lb_st, final_lb_st)
+sl_st = ta.pivotlow(low, final_lb_st, final_lb_st)
+sh_it = ta.pivothigh(high, final_lb_it, final_lb_it)
+sl_it = ta.pivotlow(low, final_lb_it, final_lb_it)
+sh_lt = ta.pivothigh(high, final_lb_lt, final_lb_lt)
+sl_lt = ta.pivotlow(low, final_lb_lt, final_lb_lt)
+
+var float last_sh_val = na
+var float last_sl_val = na
+var string trend_state = "bullish"
+var int last_sh_bar = na
+var int last_sl_bar = na
+
+if not na(sh_it)
+    last_sh_val := sh_it
+    last_sh_bar := bar_index - final_lb_it
+if not na(sl_it)
+    last_sl_val := sl_it
+    last_sl_bar := bar_index - final_lb_it
+
+bool is_bos = false
+bool is_choch = false
+bool is_bullish_break = false
+float break_price = na
+
+if not na(last_sh_val) and close > last_sh_val
+    is_bullish_break := true
+    break_price := last_sh_val
+    if trend_state == "bearish"
+        is_choch := true
+        trend_state := "bullish"
+    else
+        is_bos := true
+    last_sh_val := na
+
+if not na(last_sl_val) and close < last_sl_val
+    is_bullish_break := false
+    break_price := last_sl_val
+    if trend_state == "bullish"
+        is_choch := true
+        trend_state := "bearish"
+    else
+        is_bos := true
+    last_sl_val := na
+
+if show_bos
+    if is_bos or is_choch
+        if is_bullish_break
+            col = is_choch ? color.teal : c_bull
+            txt = is_choch ? "CHoCH ↑ (Слом характера - Разворот тренда)" : "BOS ↑ (Слом структуры - Продолжение тренда)"
+            x1_val = not na(last_sh_bar) ? last_sh_bar : bar_index - 5
+            line.new(x1=x1_val, y1=break_price, x2=bar_index, y2=break_price, color=col, style=line.style_dashed, width=1)
+            label.new(x=math.round((x1_val + bar_index) / 2), y=break_price, text=txt, style=label.style_label_center, color=color.new(color.black, 100), textcolor=col, size=get_text_size(text_sz_opt))
+        else
+            col = is_choch ? color.purple : c_bear
+            txt = is_choch ? "CHoCH ↓ (Слом характера - Разворот тренда)" : "BOS ↓ (Слом структуры - Продолжение тренда)"
+            x1_val = not na(last_sl_bar) ? last_sl_bar : bar_index - 5
+            line.new(x1=x1_val, y1=break_price, x2=bar_index, y2=break_price, color=col, style=line.style_dashed, width=1)
+            label.new(x=math.round((x1_val + bar_index) / 2), y=break_price, text=txt, style=label.style_label_center, color=color.new(color.black, 100), textcolor=col, size=get_text_size(text_sz_opt))
+
+var box[] sup_boxes = array.new<box>()
+var box[] res_boxes = array.new<box>()
+var label[] sup_labels = array.new<label>()
+var label[] res_labels = array.new<label>()
+
+atr = ta.atr(14)
+
+ph_st = ta.pivothigh(high, 5, 5)
+pl_st = ta.pivotlow(low, 5, 5)
+ph_it = ta.pivothigh(high, 15, 15)
+pl_it = ta.pivotlow(low, 15, 15)
+ph_lt = ta.pivothigh(high, 35, 35)
+pl_lt = ta.pivotlow(low, 35, 35)
+
+add_sr_zone(is_support, p_level, offset, label_text, is_lt) =>
+    border_style = is_lt ? line.style_solid : line.style_dashed
+    bg_color = is_support ? color.new(c_bull, 93) : color.new(c_bear, 93)
+    border_color = is_support ? color.new(c_bull, 70) : color.new(c_bear, 70)
+    textcolor = is_support ? c_bull : c_bear
+    
+    bool merged = false
+    if merge_sr
+        if is_support
+            if array.size(sup_boxes) > 0
+                for i = 0 to array.size(sup_boxes) - 1
+                    bx = array.get(sup_boxes, i)
+                    lbl = array.get(sup_labels, i)
+                    b_top = box.get_top(bx)
+                    b_bottom = box.get_bottom(bx)
+                    float box_center = (b_top + b_bottom) / 2.0
+                    if math.abs(p_level - box_center) < atr * merge_dist
+                        new_top = math.max(b_top, p_level + atr * 0.08)
+                        new_bottom = math.min(b_bottom, p_level - atr * 0.08)
+                        box.set_top(bx, new_top)
+                        box.set_bottom(bx, new_bottom)
+                        label.set_y(lbl, (new_top + new_bottom) / 2.0)
+                        label.set_text(lbl, label_text)
+                        merged := true
+                        break
+        else
+            if array.size(res_boxes) > 0
+                for i = 0 to array.size(res_boxes) - 1
+                    bx = array.get(res_boxes, i)
+                    lbl = array.get(res_labels, i)
+                    b_top = box.get_top(bx)
+                    b_bottom = box.get_bottom(bx)
+                    float box_center = (b_top + b_bottom) / 2.0
+                    if math.abs(p_level - box_center) < atr * merge_dist
+                        new_top = math.max(b_top, p_level + atr * 0.08)
+                        new_bottom = math.min(b_bottom, p_level - atr * 0.08)
+                        box.set_top(bx, new_top)
+                        box.set_bottom(bx, new_bottom)
+                        label.set_y(lbl, (new_top + new_bottom) / 2.0)
+                        label.set_text(lbl, label_text)
+                        merged := true
+                        break
+
+    if not merged
+        b = box.new(left=bar_index - offset, top=p_level + atr * 0.08, right=bar_index + label_offset, bottom=p_level - atr * 0.08,
+                    bgcolor=bg_color, border_color=border_color, border_style=border_style)
+        l = label.new(bar_index + label_offset, p_level, text=label_text,
+                      style=label.style_label_left, color=color.new(color.black, 100), textcolor=textcolor, size=get_text_size(text_sz_opt))
+        if is_support
+            array.push(sup_boxes, b)
+            array.push(sup_labels, l)
+            if array.size(sup_boxes) > max_sr_boxes
+                box.delete(array.shift(sup_boxes))
+                label.delete(array.shift(sup_labels))
+        else
+            array.push(res_boxes, b)
+            array.push(res_labels, l)
+            if array.size(res_boxes) > max_sr_boxes
+                box.delete(array.shift(res_boxes))
+                label.delete(array.shift(res_labels))
+
+if show_sr_zones
+    if array.size(sup_boxes) > 0
+        for i = array.size(sup_boxes) - 1 to 0
+            bx = array.get(sup_boxes, i)
+            lbl = array.get(sup_labels, i)
+            b_bottom = box.get_bottom(bx)
+            if low < b_bottom
+                box.delete(bx)
+                label.delete(lbl)
+                array.remove(sup_boxes, i)
+                array.remove(sup_labels, i)
+
+    if array.size(res_boxes) > 0
+        for i = array.size(res_boxes) - 1 to 0
+            bx = array.get(res_boxes, i)
+            lbl = array.get(res_labels, i)
+            b_top = box.get_top(bx)
+            if high > b_top
+                box.delete(bx)
+                label.delete(lbl)
+                array.remove(res_boxes, i)
+                array.remove(res_labels, i)
+
+    if not na(ph_lt)
+        p_vol = volume[35]
+        p_delta = delta_current[35]
+        label_text = "Liq LT [" + str.tostring(p_vol / 1000.0, "#.#") + "K | " + (p_delta >= 0 ? "+" : "") + str.tostring(p_delta / 1000.0, "#.#") + "K] Resistance - LT"
+        add_sr_zone(false, ph_lt, 35, label_text, true)
+    if not na(ph_it)
+        p_vol = volume[15]
+        p_delta = delta_current[15]
+        label_text = "Liq IT [" + str.tostring(p_vol / 1000.0, "#.#") + "K | " + (p_delta >= 0 ? "+" : "") + str.tostring(p_delta / 1000.0, "#.#") + "K] Resistance - IT"
+        add_sr_zone(false, ph_it, 15, label_text, false)
+    if not na(ph_st)
+        p_vol = volume[5]
+        p_delta = delta_current[5]
+        label_text = "Liq ST [" + str.tostring(p_vol / 1000.0, "#.#") + "K | " + (p_delta >= 0 ? "+" : "") + str.tostring(p_delta / 1000.0, "#.#") + "K] Resistance - ST"
+        add_sr_zone(false, ph_st, 5, label_text, false)
+
+    if not na(pl_lt)
+        p_vol = volume[35]
+        p_delta = delta_current[35]
+        label_text = "Liq LT [" + str.tostring(p_vol / 1000.0, "#.#") + "K | " + (p_delta >= 0 ? "+" : "") + str.tostring(p_delta / 1000.0, "#.#") + "K] Support - LT"
+        add_sr_zone(true, pl_lt, 35, label_text, true)
+    if not na(pl_it)
+        p_vol = volume[15]
+        p_delta = delta_current[15]
+        label_text = "Liq IT [" + str.tostring(p_vol / 1000.0, "#.#") + "K | " + (p_delta >= 0 ? "+" : "") + str.tostring(p_delta / 1000.0, "#.#") + "K] Support - IT"
+        add_sr_zone(true, pl_it, 15, label_text, false)
+    if not na(pl_st)
+        p_vol = volume[5]
+        p_delta = delta_current[5]
+        label_text = "Liq ST [" + str.tostring(p_vol / 1000.0, "#.#") + "K | " + (p_delta >= 0 ? "+" : "") + str.tostring(p_delta / 1000.0, "#.#") + "K] Support - ST"
+        add_sr_zone(true, pl_st, 5, label_text, false)
+
+if barstate.islast
+    if array.size(res_boxes) > 0
+        for i = 0 to array.size(res_boxes) - 1
+            box.set_right(array.get(res_boxes, i), bar_index + label_offset)
+            label.set_x(array.get(res_labels, i), bar_index + label_offset)
+    if array.size(sup_boxes) > 0
+        for i = 0 to array.size(sup_boxes) - 1
+            box.set_right(array.get(sup_boxes, i), bar_index + label_offset)
+            label.set_x(array.get(sup_labels, i), bar_index + label_offset)
+
+var box[] bull_ob_boxes = array.new<box>()
+var box[] bear_ob_boxes = array.new<box>()
+
+if show_ob and bar_index > 1
+    if close > high[1] and close[1] < open[1]
+        b = box.new(left=bar_index-1, top=high[1], right=bar_index, bottom=low[1], bgcolor=color.new(c_bull, 90), border_color=color.new(c_bull, 60), text="+OB (Бычий)", text_color=c_bull, text_size=size.tiny, text_halign="right", text_valign="bottom")
+        array.push(bull_ob_boxes, b)
+    if close < low[1] and close[1] > open[1]
+        b = box.new(left=bar_index-1, top=high[1], right=bar_index, bottom=low[1], bgcolor=color.new(c_bear, 90), border_color=color.new(c_bear, 60), text="-OB (Медвежий)", text_color=c_bear, text_size=size.tiny, text_halign="right", text_valign="bottom")
+        array.push(bear_ob_boxes, b)
+
+    if clean_ob and array.size(bull_ob_boxes) > 0
+        for i = array.size(bull_ob_boxes) - 1 to 0
+            bx = array.get(bull_ob_boxes, i)
+            if low < box.get_bottom(bx)
+                box.delete(bx)
+                array.remove(bull_ob_boxes, i)
+
+    if clean_ob and array.size(bear_ob_boxes) > 0
+        for i = array.size(bear_ob_boxes) - 1 to 0
+            bx = array.get(bear_ob_boxes, i)
+            if high > box.get_top(bx)
+                box.delete(bx)
+                array.remove(bear_ob_boxes, i)
+
+    if array.size(bull_ob_boxes) > 0
+        for i = 0 to array.size(bull_ob_boxes) - 1
+            box.set_right(array.get(bull_ob_boxes, i), bar_index)
+    if array.size(bear_ob_boxes) > 0
+        for i = 0 to array.size(bear_ob_boxes) - 1
+            box.set_right(array.get(bear_ob_boxes, i), bar_index)
+
+    if array.size(bull_ob_boxes) > ob_limit
+        box.delete(array.shift(bull_ob_boxes))
+    if array.size(bear_ob_boxes) > ob_limit
+        box.delete(array.shift(bear_ob_boxes))
+
+var box[] bull_fvg_boxes = array.new<box>()
+var box[] bear_fvg_boxes = array.new<box>()
+
+if show_fvg and bar_index > 2
+    if low > high[2] and close[1] > open[1]
+        array.push(bull_fvg_boxes, box.new(left=bar_index-2, top=low, right=bar_index, bottom=high[2], bgcolor=color.new(c_bull, 92), border_color=color.new(c_bull, 80), border_style=line.style_dashed, text="+FVG (Бычий)", text_color=c_bull, text_size=size.tiny, text_halign="right", text_valign="bottom"))
+    if high < low[2] and close[1] < open[1]
+        array.push(bear_fvg_boxes, box.new(left=bar_index-2, top=low[2], right=bar_index, bottom=high, bgcolor=color.new(c_bear, 92), border_color=color.new(c_bear, 80), border_style=line.style_dashed, text="-FVG (Медвежий)", text_color=c_bear, text_size=size.tiny, text_halign="right", text_valign="bottom"))
+
+    if clean_ob and array.size(bull_fvg_boxes) > 0
+        for i = array.size(bull_fvg_boxes) - 1 to 0
+            bx = array.get(bull_fvg_boxes, i)
+            if low < box.get_bottom(bx)
+                box.delete(bx)
+                array.remove(bull_fvg_boxes, i)
+
+    if clean_ob and array.size(bear_fvg_boxes) > 0
+        for i = array.size(bear_fvg_boxes) - 1 to 0
+            bx = array.get(bear_fvg_boxes, i)
+            if high > box.get_top(bx)
+                box.delete(bx)
+                array.remove(bear_fvg_boxes, i)
+
+    if array.size(bull_fvg_boxes) > 0
+        for i = 0 to array.size(bull_fvg_boxes) - 1
+            box.set_right(array.get(bull_fvg_boxes, i), bar_index)
+    if array.size(bear_fvg_boxes) > 0
+        for i = 0 to array.size(bear_fvg_boxes) - 1
+            box.set_right(array.get(bear_fvg_boxes, i), bar_index)
+
+    if array.size(bull_fvg_boxes) > ob_limit
+        box.delete(array.shift(bull_fvg_boxes))
+    if array.size(bear_fvg_boxes) > ob_limit
+        box.delete(array.shift(bear_fvg_boxes))
+
+highest_high = ta.highest(high, final_fib_period)
+lowest_low   = ta.lowest(low, final_fib_period)
+swing_range  = highest_high - lowest_low
+fib_500      = lowest_low + swing_range * 0.5
+
+var string struct_dir = "Вверх"
+ph_trend = ta.pivothigh(high, 10, 10)
+pl_trend = ta.pivotlow(low, 10, 10)
+var float last_ph_trend = na
+var float last_pl_trend = na
+if not na(ph_trend)
+    last_ph_trend := ph_trend
+if not na(pl_trend)
+    last_pl_trend := pl_trend
+
+if not na(last_ph_trend) and close > last_ph_trend
+    struct_dir := "Вверх"
+    last_ph_trend := na
+if not na(last_pl_trend) and close < last_pl_trend
+    struct_dir := "Вниз"
+    last_pl_trend := na
+
+rsi_val = ta.rsi(close, 14)
+[macd_line, signal_line, macd_hist] = ta.macd(close, 12, 26, 9)
+
+bool rsi_bull_conf = rsi_val < 45 or ta.crossover(rsi_val, 35)
+bool rsi_bear_conf = rsi_val > 55 or ta.crossunder(rsi_val, 65)
+bool macd_bull_conf = macd_hist > 0 or ta.crossover(macd_line, signal_line)
+bool macd_bear_conf = macd_hist < 0 or ta.crossunder(macd_line, signal_line)
+
+cur_dir = dir_mode == "Только Вверх" ? "Вверх" : (dir_mode == "Только Вниз" ? "Вниз" : (dir_mode == "RSI фильтр" ? (rsi_val > 50 ? "Вверх" : "Вниз") : struct_dir))
+bool is_bull = cur_dir == "Вверх"
+
+var float last_sweep_price = na
+var string sweep_type = na
+
+float pivot_high_level = ta.pivothigh(high, 5, 5)
+float pivot_low_level  = ta.pivotlow(low, 5, 5)
+
+var float key_high_ref = na
+var float key_low_ref  = na
+
+if not na(pivot_high_level)
+    key_high_ref := pivot_high_level
+if not na(pivot_low_level)
+    key_low_ref := pivot_low_level
+
+bool is_high_sweep = false
+bool is_low_sweep = false
+
+if not na(key_high_ref) and high > key_high_ref and close <= key_high_ref
+    float body_h = math.abs(close - open)
+    float wick_h = high - math.max(open, close)
+    float total_h = high - low
+    if total_h > 0 and (wick_h >= total_h * 0.40 or body_h <= total_h * 0.45)
+        is_high_sweep := true
+        last_sweep_price := key_high_ref
+        sweep_type := "high"
+
+if not na(key_low_ref) and low < key_low_ref and close >= key_low_ref
+    float body_h = math.abs(close - open)
+    float wick_h = math.min(open, close) - low
+    float total_h = high - low
+    if total_h > 0 and (wick_h >= total_h * 0.40 or body_h <= total_h * 0.45)
+        is_low_sweep := true
+        last_sweep_price := key_low_ref
+        sweep_type := "low"
+
+if is_high_sweep
+    is_bull := false
+else if is_low_sweep
+    is_bull := true
+
+float ote_top = na
+float ote_bottom = na
+float ext_1 = na
+float ext_2 = na
+float ext_3 = na
+
+if is_bull
+    ote_top := highest_high - swing_range * 0.618
+    ote_bottom := highest_high - swing_range * 0.786
+    ext_1 := highest_high + swing_range * 0.272
+    ext_2 := highest_high + swing_range * 0.618
+    ext_3 := highest_high + swing_range * 1.618
+else
+    ote_top := lowest_low + swing_range * 0.786
+    ote_bottom := lowest_low + swing_range * 0.618
+    ext_1 := lowest_low - swing_range * 0.272
+    ext_2 := lowest_low - swing_range * 0.618
+    ext_3 := lowest_low - swing_range * 1.618
+
+var int fc_start_bar = 0
+var float fc_start_price = na
+var float fc_p1 = na
+var float fc_p2 = na
+var float fc_p3 = na
+var float fc_invalid_level = na
+var float fc_alt_p1 = na
+var float fc_alt_p2 = na
+var float fc_alt_p3 = na
+var float fc_alt_p4 = na
+var bool fc_is_bull = true
+var bool fc_leg1_hit = false
+var bool fc_leg2_hit = false
+var bool fc_leg3_hit = false
+var bool fc_leg4_hit = false
+var int fc_leg1_idx = 0
+var float fc_leg1_val = na
+var int fc_leg2_idx = 0
+var float fc_leg2_val = na
+var int fc_leg3_idx = 0
+var float fc_leg3_val = na
+var int fc_leg4_idx = 0
+var float fc_leg4_val = na
+
+in_support_zone = false
+if array.size(sup_boxes) > 0
+    for i = 0 to array.size(sup_boxes) - 1
+        bx = array.get(sup_boxes, i)
+        if low <= box.get_top(bx) and close >= box.get_bottom(bx)
+            in_support_zone := true
+            break
+
+in_resistance_zone = false
+if array.size(res_boxes) > 0
+    for i = 0 to array.size(res_boxes) - 1
+        bx = array.get(res_boxes, i)
+        if high >= box.get_bottom(bx) and close <= box.get_top(bx)
+            in_resistance_zone := true
+            break
+
+in_bullish_ob = false
+if array.size(bull_ob_boxes) > 0
+    for i = 0 to array.size(bull_ob_boxes) - 1
+        bx = array.get(bull_ob_boxes, i)
+        if low <= box.get_top(bx) and close >= box.get_bottom(bx)
+            in_bullish_ob := true
+            break
+
+in_bearish_ob = false
+if array.size(bear_ob_boxes) > 0
+    for i = 0 to array.size(bear_ob_boxes) - 1
+        bx = array.get(bear_ob_boxes, i)
+        if high >= box.get_bottom(bx) and close <= box.get_top(bx)
+            in_bearish_ob := true
+            break
+
+in_ote_zone = false
+if not na(ote_top) and not na(ote_bottom)
+    if is_bull
+        in_ote_zone := low <= ote_top and close >= ote_bottom
+    else
+        in_ote_zone := high >= ote_bottom and close <= ote_top
+
+bullish_structure_break = is_bos and is_bullish_break
+bearish_structure_break = is_bos and not is_bullish_break
+
+bullish_choch = is_choch and is_bullish_break
+bearish_choch = is_choch and not is_bullish_break
+
+bool buy_sig = false
+bool sell_sig = false
+
+if show_signals
+    if signal_mode == "Агрессивный"
+        buy_sig  := (is_extreme_delta and delta_current > 0 and (in_support_zone or in_bullish_ob or in_ote_zone)) or bullish_choch or bullish_structure_break
+        sell_sig := (is_extreme_delta and delta_current < 0 and (in_resistance_zone or in_bearish_ob or in_ote_zone)) or bearish_choch or bearish_structure_break
+    else if signal_mode == "Консервативный"
+        buy_sig  := (is_extreme_delta and delta_current > 0 and (in_support_zone or in_bullish_ob or in_ote_zone)) or (bullish_choch and (in_support_zone or in_bullish_ob))
+        sell_sig := (is_extreme_delta and delta_current < 0 and (in_resistance_zone or in_bearish_ob or in_ote_zone)) or (bearish_choch and (in_resistance_zone or in_bearish_ob))
+    else
+        buy_sig  := (bullish_choch or bullish_structure_break) and is_extreme_delta and delta_current > 0 and (in_support_zone or in_bullish_ob or in_ote_zone)
+        sell_sig := (bearish_choch or bearish_structure_break) and is_extreme_delta and delta_current < 0 and (in_resistance_zone or in_bearish_ob or in_ote_zone)
+
+var int last_sig_bar = 0
+if buy_sig or sell_sig
+    if bar_index - last_sig_bar < 5
+        buy_sig := false
+        sell_sig := false
+    else
+        last_sig_bar := bar_index
+
+htf_trend_up = request.security(syminfo.tickerid, fc_use_mtf ? fc_mtf_tf : timeframe.period, ta.ema(close, 9) > ta.ema(close, 21))
+htf_rsi      = request.security(syminfo.tickerid, fc_use_mtf ? fc_mtf_tf : timeframe.period, ta.rsi(close, 14))
+htf_atr      = request.security(syminfo.tickerid, fc_use_mtf ? fc_mtf_tf : timeframe.period, ta.atr(14))
+
+bool consensus_is_bull = is_bull
+float bull_score = 0.0
+float bear_score = 0.0
+
+if htf_trend_up
+    bull_score := bull_score + 35.0
+else
+    bear_score := bear_score + 35.0
+
+if is_bull
+    bull_score := bull_score + 20.0
+else
+    bear_score := bear_score + 20.0
+
+if bullish_choch or bullish_structure_break
+    bull_score := bull_score + 25.0
+if bearish_choch or bearish_structure_break
+    bear_score := bear_score + 25.0
+
+if is_extreme_delta and delta_current > 0
+    bull_score := bull_score + 20.0
+if is_extreme_delta and delta_current < 0
+    bear_score := bear_score + 20.0
+
+if rsi_bull_conf
+    bull_score := bull_score + 15.0
+if rsi_bear_conf
+    bear_score := bear_score + 15.0
+
+if macd_bull_conf
+    bull_score := bull_score + 15.0
+if macd_bear_conf
+    bear_score := bear_score + 15.0
+
+consensus_is_bull := bull_score >= bear_score
+if is_high_sweep
+    consensus_is_bull := false
+else if is_low_sweep
+    consensus_is_bull := true
+
+bool is_confirmed = barstate.isconfirmed or barstate.ishistory
+bool consensus_changed = is_confirmed and ta.change(consensus_is_bull)
+
+bool fc_invalidated = false
+if is_confirmed and fc_start_bar > 0 and bar_index > fc_start_bar
+    if fc_is_bull
+        if close < fc_invalid_level
+            fc_invalidated := true
+        if bearish_choch or bearish_structure_break
+            fc_invalidated := true
+        if not fc_leg1_hit and (close > fc_p2 or high > highest_high[1] or bullish_structure_break or bullish_choch)
+            fc_invalidated := true
+    else
+        if close > fc_invalid_level
+            fc_invalidated := true
+        if bullish_choch or bullish_structure_break
+            fc_invalidated := true
+        if not fc_leg1_hit and (close < fc_p2 or low < lowest_low[1] or bearish_structure_break or bearish_choch)
+            fc_invalidated := true
+
+bool should_realign = is_confirmed and ((fc_start_bar > 0 and bar_index - fc_start_bar > final_fc_lookback) or fc_invalidated)
+
+bool can_realign = is_confirmed or fc_start_bar == 0
+
+if buy_sig or sell_sig or (can_realign and (should_realign or consensus_changed))
+    fc_start_bar := bar_index
+    fc_start_price := close
+    fc_is_bull := buy_sig ? true : (sell_sig ? false : consensus_is_bull)
+    
+    float mtf_mult = 1.0
+    if fc_use_mtf
+        if fc_is_bull
+            mtf_mult := htf_trend_up ? 1.25 : 0.75
+        else
+            mtf_mult := not htf_trend_up ? 1.25 : 0.75
+    
+    float tp_mult = final_fc_target_mult * mtf_mult
+    
+    float target_p1 = na
+    if fc_is_bull
+        if array.size(bull_ob_boxes) > 0
+            for i = array.size(bull_ob_boxes) - 1 to 0
+                box bx = array.get(bull_ob_boxes, i)
+                float ob_top = box.get_top(bx)
+                float ob_bot = box.get_bottom(bx)
+                float ob_mid = (ob_top + ob_bot) / 2
+                if ob_mid < close
+                    if (not na(ote_top) and ob_mid <= ote_top + atr * 0.5 and ob_mid >= ote_bottom - atr * 0.5) or na(ote_top)
+                        target_p1 := ob_mid
+                        break
+        if na(target_p1) and array.size(bull_fvg_boxes) > 0
+            for i = array.size(bull_fvg_boxes) - 1 to 0
+                box bx = array.get(bull_fvg_boxes, i)
+                float fvg_mid = (box.get_top(bx) + box.get_bottom(bx)) / 2
+                if fvg_mid < close
+                    if (not na(ote_top) and fvg_mid <= ote_top + atr * 0.5 and fvg_mid >= ote_bottom - atr * 0.5) or na(ote_top)
+                        target_p1 := fvg_mid
+                        break
+        if na(target_p1)
+            target_p1 := not na(ote_top) and not na(ote_bottom) ? (ote_top + ote_bottom) / 2 : close - atr * 1.2
+    else
+        if array.size(bear_ob_boxes) > 0
+            for i = array.size(bear_ob_boxes) - 1 to 0
+                box bx = array.get(bear_ob_boxes, i)
+                float ob_top = box.get_top(bx)
+                float ob_bot = box.get_bottom(bx)
+                float ob_mid = (ob_top + ob_bot) / 2
+                if ob_mid > close
+                    if (not na(ote_top) and ob_mid >= ote_top - atr * 0.5 and ob_mid <= ote_bottom + atr * 0.5) or na(ote_top)
+                        target_p1 := ob_mid
+                        break
+        if na(target_p1) and array.size(bear_fvg_boxes) > 0
+            for i = array.size(bear_fvg_boxes) - 1 to 0
+                box bx = array.get(bear_fvg_boxes, i)
+                float fvg_mid = (box.get_top(bx) + box.get_bottom(bx)) / 2
+                if fvg_mid > close
+                    if (not na(ote_top) and fvg_mid >= ote_top - atr * 0.5 and fvg_mid <= ote_bottom + atr * 0.5) or na(ote_top)
+                        target_p1 := fvg_mid
+                        break
+        if na(target_p1)
+            target_p1 := not na(ote_top) and not na(ote_bottom) ? (ote_top + ote_bottom) / 2 : close + atr * 1.2
+
+    float target_p2 = na
+    if fc_is_bull
+        if array.size(res_boxes) > 0
+            for i = array.size(res_boxes) - 1 to 0
+                box bx = array.get(res_boxes, i)
+                float res_bot = box.get_bottom(bx)
+                if res_bot > close
+                    target_p2 := res_bot
+                    break
+        if na(target_p2)
+            target_p2 := highest_high > 0 ? highest_high + swing_range * 0.05 : close + atr * 2.5
+    else
+        if array.size(sup_boxes) > 0
+            for i = array.size(sup_boxes) - 1 to 0
+                box bx = array.get(sup_boxes, i)
+                float sup_top = box.get_bottom(bx)
+                if sup_top < close
+                    target_p2 := sup_top
+                    break
+        if na(target_p2)
+            target_p2 := lowest_low > 0 ? lowest_low - swing_range * 0.05 : close - atr * 2.5
+
+    float target_p3 = na
+    if fc_is_bull
+        if array.size(res_boxes) > 0
+            for i = array.size(res_boxes) - 1 to 0
+                box bx = array.get(res_boxes, i)
+                float res_mid = (box.get_top(bx) + box.get_bottom(bx)) / 2
+                if res_mid > target_p2
+                    target_p3 := res_mid
+                    break
+        if na(target_p3)
+            target_p3 := not na(ext_2) ? ext_2 : close + atr * 4.8
+            if fc_model_acc == "Conservative"
+                target_p3 := close + atr * 3.5 * tp_mult
+            else if fc_model_acc == "Aggressive"
+                target_p3 := close + atr * 6.5 * tp_mult
+            else
+                target_p3 := not na(ext_2) ? close + (ext_2 - close) * tp_mult : close + atr * 4.8 * tp_mult
+    else
+        if array.size(sup_boxes) > 0
+            for i = array.size(sup_boxes) - 1 to 0
+                box bx = array.get(sup_boxes, i)
+                float sup_mid = (box.get_top(bx) + box.get_bottom(bx)) / 2
+                if sup_mid < target_p2
+                    target_p3 := sup_mid
+                    break
+        if na(target_p3)
+            target_p3 := not na(ext_2) ? ext_2 : close - atr * 4.8
+            if fc_model_acc == "Conservative"
+                target_p3 := close - atr * 3.5 * tp_mult
+            else if fc_model_acc == "Aggressive"
+                target_p3 := close - atr * 6.5 * tp_mult
+            else
+                target_p3 := not na(ext_2) ? close - (close - ext_2) * tp_mult : close - atr * 4.8 * tp_mult
+
+    if is_high_sweep and not fc_is_bull
+        target_p1 := last_sweep_price - swing_range * 0.08
+        target_p2 := close - swing_range * 0.48
+        target_p3 := close - swing_range * 1.25 * tp_mult
+    else if is_low_sweep and fc_is_bull
+        target_p1 := last_sweep_price + swing_range * 0.08
+        target_p2 := close + swing_range * 0.48
+        target_p3 := close + swing_range * 1.25 * tp_mult
+
+    fc_p1 := target_p1
+    fc_p2 := target_p2
+    fc_p3 := target_p3
+    
+    if fc_is_bull
+        fc_invalid_level := math.min(close - atr * 1.5, not na(ote_bottom) ? ote_bottom - atr * 0.5 : lowest_low)
+    else
+        fc_invalid_level := math.max(close + atr * 1.5, not na(ote_top) ? ote_top + atr * 0.5 : highest_high)
+
+    if fc_is_bull
+        fc_alt_p1 := fc_invalid_level
+        fc_alt_p2 := fc_invalid_level - atr * 1.2
+        fc_alt_p3 := lowest_low > 0 ? math.min(lowest_low - swing_range * 0.25, fc_invalid_level - atr * 2.8) : fc_invalid_level - atr * 2.8
+        fc_alt_p4 := fc_alt_p3 - atr * 1.5
+    else
+        fc_alt_p1 := fc_invalid_level
+        fc_alt_p2 := fc_invalid_level + atr * 1.2
+        fc_alt_p3 := highest_high > 0 ? math.max(highest_high + swing_range * 0.25, fc_invalid_level + atr * 2.8) : fc_invalid_level + atr * 2.8
+        fc_alt_p4 := fc_alt_p3 + atr * 1.5
+
+    fc_leg1_hit := false
+    fc_leg2_hit := false
+    fc_leg3_hit := false
+    fc_leg4_hit := false
+    fc_leg1_idx := 0
+    fc_leg1_val := na
+    fc_leg2_idx := 0
+    fc_leg2_val := na
+    fc_leg3_idx := 0
+    fc_leg3_val := na
+    fc_leg4_idx := 0
+    fc_leg4_val := na
+
+if fc_start_bar > 0 and bar_index > fc_start_bar
+    if fc_is_bull
+        if not fc_leg1_hit and low <= fc_p1
+            fc_leg1_hit := true
+            fc_leg1_idx := bar_index
+            fc_leg1_val := low
+        if fc_leg1_hit and not fc_leg2_hit and high >= fc_p2
+            fc_leg2_hit := true
+            fc_leg2_idx := bar_index
+            fc_leg2_val := high
+        if fc_leg2_hit and not fc_leg3_hit and high >= fc_p3
+            fc_leg3_hit := true
+            fc_leg3_idx := bar_index
+            fc_leg3_val := high
+        if fc_leg3_hit and not fc_leg4_hit and low <= fc_p2
+            fc_leg4_hit := true
+            fc_leg4_idx := bar_index
+            fc_leg4_val := low
+    else
+        if not fc_leg1_hit and high >= fc_p1
+            fc_leg1_hit := true
+            fc_leg1_idx := bar_index
+            fc_leg1_val := high
+        if fc_leg1_hit and not fc_leg2_hit and low <= fc_p2
+            fc_leg2_hit := true
+            fc_leg2_idx := bar_index
+            fc_leg2_val := low
+        if fc_leg1_hit and not fc_leg3_hit and low <= fc_p3
+            fc_leg3_hit := true
+            fc_leg3_idx := bar_index
+            fc_leg3_val := low
+        if fc_leg3_hit and not fc_leg4_hit and high >= fc_p2
+            fc_leg4_hit := true
+            fc_leg4_idx := bar_index
+            fc_leg4_val := high
+
+get_bounce_probability(level_price) =>
+    base_p = 55
+    dist_pct = math.abs(close - level_price) / close * 100
+    if dist_pct < 0.5
+        base_p := base_p + 15
+    if rsi_val < 30 and level_price < fib_500
+        base_p := base_p + 20
+    if rsi_val > 70 and level_price > fib_500
+        base_p := base_p + 20
+    math.min(95, math.max(35, base_p))
+
+prob_ote = get_bounce_probability(ote_bottom)
+prob_ext = get_bounce_probability(ext_2)
+
+float fc_probability = 55.0
+
+if fc_use_mtf
+    if fc_is_bull == htf_trend_up
+        fc_probability := fc_probability + 15.0
+    else
+        fc_probability := fc_probability - 15.0
+
+if is_extreme_delta
+    if (fc_is_bull and delta_current > 0) or (not fc_is_bull and delta_current < 0)
+        fc_probability := fc_probability + 10.0
+
+if (fc_is_bull and in_bullish_ob) or (not fc_is_bull and in_bearish_ob)
+    fc_probability := fc_probability + 10.0
+
+if fc_is_bull and rsi_val < 40
+    fc_probability := fc_probability + 10.0
+else if not fc_is_bull and rsi_val > 60
+    fc_probability := fc_probability + 10.0
+
+if in_ote_zone
+    fc_probability := fc_probability + 10.0
+
+fc_probability := math.min(98.0, math.max(35.0, fc_probability))
+
+var line line_ote_1 = na
+var line line_ote_2 = na
+var line line_eq = na
+var line line_ext_1 = na
+var line line_ext_2 = na
+var line line_ext_3 = na
+var label label_ote = na
+var label label_eq = na
+var label label_ext_1 = na
+var label label_ext = na
+var label label_ext_3 = na
+var box zone_ote = na
+
+var line line_fc_0 = na
+var line line_fc_1 = na
+var line line_fc_2 = na
+var line line_fc_3 = na
+var line line_alt_0 = na
+var line line_alt_1 = na
+var line line_alt_2 = na
+var line line_alt_3 = na
+var label label_fc_0 = na
+var label label_fc_1 = na
+var label label_fc_2 = na
+var label label_fc_3 = na
+var line line_sl = na
+var label label_sl = na
+var label label_fc_4 = na
+var label label_alt_desc = na
+
+if barstate.islast
+    line.delete(line_ote_1)
+    line.delete(line_ote_2)
+    line.delete(line_eq)
+    line.delete(line_ext_1)
+    line.delete(line_ext_2)
+    line.delete(line_ext_3)
+    label.delete(label_ote)
+    label.delete(label_eq)
+    label.delete(label_ext_1)
+    label.delete(label_ext)
+    label.delete(label_ext_3)
+    box.delete(zone_ote)
+
+    line.delete(line_fc_0), line.delete(line_fc_1), line.delete(line_fc_2), line.delete(line_fc_3)
+    line.delete(line_sl)
+    line.delete(line_alt_0), line.delete(line_alt_1), line.delete(line_alt_2), line.delete(line_alt_3)
+    label.delete(label_fc_0), label.delete(label_fc_1), label.delete(label_fc_2), label.delete(label_fc_3), label.delete(label_fc_4)
+    label.delete(label_sl)
+    label.delete(label_alt_desc)
+
+    ote_color = is_bull ? c_bull : c_bear
+    ote_text = is_bull ? "IT OTE 62-79% [Поддержка]" : "IT OTE 62-79% [Сопротивление]"
+
+    if show_reversal
+        line_ote_1 := line.new(bar_index - line_len, ote_top, bar_index + label_offset, ote_top, color=color.new(ote_color, 30), width=1)
+        line_ote_2 := line.new(bar_index - line_len, ote_bottom, bar_index + label_offset, ote_bottom, color=color.new(ote_color, 30), width=1)
+        zone_ote := box.new(left=bar_index - line_len, top=ote_top, right=bar_index + label_offset, bottom=ote_bottom, bgcolor=color.new(ote_color, 94), border_color=color.new(ote_color, 70), border_style=line.style_dashed)
+        
+        label_ote := label.new(bar_index + label_offset, ote_top, ote_text + (show_probs ? " | Вероятность отскока: " + str.tostring(prob_ote) + "%" : ""),
+                               color=color.new(color.black, 100), textcolor=ote_color, style=label.style_label_left, size=get_text_size(text_sz_opt))
+
+        line_eq := line.new(bar_index - line_len, fib_500, bar_index + label_offset, fib_500, color=color.new(c_neutral, 50), width=1, style=line.style_dashed)
+        label_eq := label.new(bar_index + label_offset, fib_500, "0.50 EQ (Равновесие / Equilibrium)", color=color.new(color.black, 100), textcolor=c_neutral, style=label.style_label_left, size=get_text_size(text_sz_opt))
+
+        if show_fib_ext
+            ext_color = is_bull ? c_bear : c_bull
+            
+            line_ext_1 := line.new(bar_index - line_len, ext_1, bar_index + label_offset, ext_1, color=color.new(ext_color, 50), width=1, style=line.style_dashed)
+            line_ext_2 := line.new(bar_index - line_len, ext_2, bar_index + label_offset, ext_2, color=color.new(ext_color, 30), width=2)
+            line_ext_3 := line.new(bar_index - line_len, ext_3, bar_index + label_offset, ext_3, color=color.new(ext_color, 50), width=1, style=line.style_dashed)
+            
+            label_ext_1 := label.new(bar_index + label_offset, ext_1, "🏁 ТЕЙК-ПРОФИТ 1 (TP1 1.272 Fib): " + str.tostring(ext_1, "#.##"), color=color.new(color.black, 100), textcolor=ext_color, style=label.style_label_left, size=get_text_size(text_sz_opt))
+            label_ext := label.new(bar_index + label_offset, ext_2, "🎯 ТЕЙК-ПРОФИТ 2 (TP2 1.618 Fib Target): " + str.tostring(ext_2, "#.##") + (show_probs ? " | Вероятность: " + str.tostring(prob_ext) + "%" : ""),
+                                   color=color.new(color.black, 100), textcolor=ext_color, style=label.style_label_left, size=get_text_size(text_sz_opt))
+            label_ext_3 := label.new(bar_index + label_offset, ext_3, "🚀 ТЕЙК-ПРОФИТ 3 (TP3 2.618 Fib Target): " + str.tostring(ext_3, "#.##"), color=color.new(color.black, 100), textcolor=ext_color, style=label.style_label_left, size=get_text_size(text_sz_opt))
+
+    if show_forecast
+        int x0 = bar_index
+        float y0 = close
+        
+        int x1 = bar_index + 8
+        float y1 = is_bull ? (not na(ote_top) and not na(ote_bottom) ? (ote_top + ote_bottom) / 2 : close - atr * 1.2) : (not na(ote_top) and not na(ote_bottom) ? (ote_top + ote_bottom) / 2 : close + atr * 1.2)
+        int x2 = bar_index + 18
+        float y2 = is_bull ? (highest_high > 0 ? highest_high + swing_range * 0.05 : close + atr * 2.5) : (lowest_low > 0 ? lowest_low - swing_range * 0.05 : close - atr * 2.5)
+        int x3 = bar_index + 30
+        float y3 = not na(ext_2) ? ext_2 : (is_bull ? close + atr * 4.8 : close - atr * 4.8)
+        int x4 = bar_index + 38
+        float y4 = y2
+        
+        int alt_x1 = bar_index + 6
+        float alt_y1 = is_bull ? close - atr * 0.35 : close + atr * 0.35
+        int alt_x2 = bar_index + 16
+        float alt_y2 = is_bull ? (highest_high > 0 ? highest_high + swing_range * 0.1 : close + atr * 2.0) : (lowest_low > 0 ? lowest_low - swing_range * 0.1 : close - atr * 2.0)
+        int alt_x3 = bar_index + 28
+        float alt_y3 = is_bull ? (highest_high > 0 ? highest_high : close + atr * 1.0) : (lowest_low > 0 ? lowest_low : close - atr * 1.0)
+        int alt_x4 = bar_index + 36
+        float alt_y4 = is_bull ? (not na(ext_2) ? ext_2 + atr * 1.2 : close + atr * 6.0) : (not na(ext_2) ? ext_2 - atr * 1.2 : close - atr * 6.0)
+
+        bool draw_is_bull = is_bull
+        bool leg1_completed = false
+        bool leg2_completed = false
+        bool leg3_completed = false
+        bool leg4_completed = false
+
+        if fc_start_bar > 0 and bar_index - fc_start_bar <= final_fc_lookback
+            x0 := fc_start_bar
+            y0 := fc_start_price
+            
+            x1 := fc_leg1_hit ? fc_leg1_idx : math.max(bar_index + 4, fc_start_bar + 8)
+            y1 := fc_leg1_hit ? fc_leg1_val : fc_p1
+            
+            x2 := fc_leg2_hit ? fc_leg2_idx : (fc_leg1_hit ? math.max(bar_index + 12, fc_leg1_idx + 10) : math.max(bar_index + 12, fc_start_bar + 18))
+            y2 := fc_leg2_hit ? fc_leg2_val : fc_p2
+            
+            x3 := fc_leg3_hit ? fc_leg3_idx : (fc_leg2_hit ? math.max(bar_index + 20, fc_leg2_idx + 12) : math.max(bar_index + 20, fc_start_bar + 30))
+            y3 := fc_leg3_hit ? fc_leg3_val : fc_p3
+            
+            x4 := fc_leg4_hit ? fc_leg4_idx : (fc_leg3_hit ? math.max(bar_index + 26, fc_leg3_idx + 8) : math.max(bar_index + 26, fc_start_bar + 38))
+            y4 := fc_leg4_hit ? fc_leg4_val : y2
+            
+            alt_x1 := math.max(bar_index + 4, fc_start_bar + 6)
+            alt_y1 := fc_alt_p1
+            
+            alt_x2 := math.max(bar_index + 10, fc_start_bar + 16)
+            alt_y2 := fc_alt_p2
+            
+            alt_x3 := math.max(bar_index + 18, fc_start_bar + 28)
+            alt_y3 := fc_alt_p3
+            
+            alt_x4 := math.max(bar_index + 24, fc_start_bar + 36)
+            alt_y4 := fc_alt_p4
+
+            draw_is_bull := fc_is_bull
+            leg1_completed := fc_leg1_hit
+            leg2_completed := fc_leg2_hit
+            leg3_completed := fc_leg3_hit
+            leg4_completed := fc_leg4_hit
+
+        color color_leg1 = draw_is_bull ? (leg1_completed ? color.new(c_bull, 60) : color.new(c_bull, 15)) : (leg1_completed ? color.new(c_bear, 60) : color.new(c_bear, 15))
+        color color_leg2 = draw_is_bull ? (leg2_completed ? color.new(c_bull, 60) : color.new(c_bull, 15)) : (leg2_completed ? color.new(c_bear, 60) : color.new(c_bear, 15))
+        color color_leg3 = draw_is_bull ? (leg3_completed ? color.new(c_bull, 60) : color.new(c_bull, 15)) : (leg3_completed ? color.new(c_bear, 60) : color.new(c_bear, 15))
+        color color_leg4 = leg4_completed ? color.new(color.purple, 60) : color.new(color.purple, 15)
+        
+        int width_leg1 = leg1_completed ? 2 : 4
+        int width_leg2 = leg2_completed ? 2 : (leg1_completed ? 4 : 3)
+        int width_leg3 = leg3_completed ? 2 : (leg2_completed ? 4 : 3)
+        int width_leg4 = leg4_completed ? 2 : (leg3_completed ? 4 : 3)
+
+        line_fc_0 := line.new(x1=x0, y1=y0, x2=x1, y2=y1, xloc=xloc.bar_index, color=color_leg1, width=width_leg1, style=leg1_completed ? line.style_dashed : line.style_solid)
+        line_fc_1 := line.new(x1=x1, y1=y1, x2=x2, y2=y2, xloc=xloc.bar_index, color=color_leg2, width=width_leg2, style=leg2_completed ? line.style_dashed : line.style_solid)
+        line_fc_2 := line.new(x1=x2, y1=y2, x2=x3, y2=y3, xloc=xloc.bar_index, color=color_leg3, width=width_leg3, style=leg3_completed ? line.style_dashed : line.style_solid)
+        if fc_post_target
+            line_fc_3 := line.new(x1=x3, y1=y3, x2=x4, y2=y4, xloc=xloc.bar_index, color=color_leg4, width=width_leg4, style=leg4_completed ? line.style_dashed : line.style_dotted)
+
+        if show_alt_wave
+            color alt_line_color = draw_is_bull ? color.new(c_bear, 25) : color.new(c_bull, 25)
+            line_alt_0 := line.new(x1=x0, y1=y0, x2=alt_x1, y2=alt_y1, xloc=xloc.bar_index, color=alt_line_color, width=2, style=line.style_dotted)
+            line_alt_1 := line.new(x1=alt_x1, y1=alt_y1, x2=alt_x2, y2=alt_y2, xloc=xloc.bar_index, color=alt_line_color, width=2, style=line.style_dashed)
+            line_alt_2 := line.new(x1=alt_x2, y1=alt_y2, x2=alt_x3, y2=alt_y3, xloc=xloc.bar_index, color=alt_line_color, width=2, style=line.style_dashed)
+            if fc_post_target
+                line_alt_3 := line.new(x1=alt_x3, y1=alt_y3, x2=alt_x4, y2=alt_y4, xloc=xloc.bar_index, color=alt_line_color, width=2, style=line.style_dotted)
+
+        color sl_line_color = draw_is_bull ? c_bear : c_bull
+        line_sl := line.new(x1=x0, y1=fc_invalid_level, x2=bar_index + label_offset + 12, y2=fc_invalid_level, xloc=xloc.bar_index, color=sl_line_color, width=2, style=line.style_solid)
+        label_sl := label.new(bar_index + label_offset + 12, fc_invalid_level, "🛑 СТОП-ЛОСС (SL / Отмена): " + str.tostring(fc_invalid_level, "#.##"), color=color.new(color.black, 100), textcolor=sl_line_color, style=label.style_label_left, size=get_text_size(text_sz_opt))
+
+        color col_node = draw_is_bull ? c_bull : c_bear
+        
+        label_fc_0 := label.new(x0, y0, "Прогноз: Начало импульса 🟢\\n(Вероятность успеха: " + str.tostring(fc_probability, "#") + "%)", color=color.new(color.black, 100), textcolor=col_node, style=label.style_label_down, size=size.small)
+        
+        string txt_l1 = leg1_completed ? "📍 ВХОД (Entry): " + str.tostring(y1, "#.##") + " [OK ✅]" : (draw_is_bull ? "📍 ВХОД (Entry / OTE Тест): " + str.tostring(y1, "#.##") + " ↗\\nВероятность: " + str.tostring(fc_probability, "#") + "%" : "📍 ВХОД (Entry / OTE Тест): " + str.tostring(y1, "#.##") + " ↘\\nВероятность: " + str.tostring(fc_probability, "#") + "%")
+        label_fc_1 := label.new(x1, y1, txt_l1, color=color.new(color.black, 100), textcolor=leg1_completed ? color.gray : col_node, style=draw_is_bull ? label.style_label_up : label.style_label_down, size=size.small)
+        
+        string txt_l2 = leg2_completed ? "🏁 TP1 / Пробой: " + str.tostring(y2, "#.##") + " [OK ✅]" : (draw_is_bull ? "🏁 ТЕЙК-ПРОФИТ 1 (TP1 / Пробой): " + str.tostring(y2, "#.##") + " ↗" : "🏁 ТЕЙК-ПРОФИТ 1 (TP1 / Пробой): " + str.tostring(y2, "#.##") + " ↘")
+        label_fc_2 := label.new(x2, y2, txt_l2, color=color.new(color.black, 100), textcolor=leg2_completed ? color.gray : col_node, style=draw_is_bull ? label.style_label_down : label.style_label_up, size=size.small)
+        
+        string txt_l3 = leg3_completed ? "🎯 TP2 / Цель: " + str.tostring(y3, "#.##") + " [OK ✅]" : (draw_is_bull ? "🎯 ТЕЙК-ПРОФИТ 2 (TP2 🎯): " + str.tostring(y3, "#.##") + " ↑\\nВероятность: " + str.tostring(fc_probability, "#") + "%" : "🎯 ТЕЙК-ПРОФИТ 2 (TP2 🎯): " + str.tostring(y3, "#.##") + " ↓\\nВероятность: " + str.tostring(fc_probability, "#") + "%")
+        label_fc_3 := label.new(x3, y3, txt_l3, color=color.new(color.black, 100), textcolor=leg3_completed ? color.gray : col_node, style=draw_is_bull ? label.style_label_up : label.style_label_down, size=size.small)
+
+        if fc_post_target
+            string txt_l4 = leg4_completed ? "🚀 TP3 / Зеркальный ретест [OK ✅]" : (draw_is_bull ? "🚀 ТЕЙК-ПРОФИТ 3 (TP3 / Ретест): " + str.tostring(y4, "#.##") + " 🔄" : "🚀 ТЕЙК-ПРОФИТ 3 (TP3 / Ретест): " + str.tostring(y4, "#.##") + " 🔄")
+            label_fc_4 := label.new(x4, y4, txt_l4, color=color.new(color.gray, 100), textcolor=leg4_completed ? color.gray : color.purple, style=draw_is_bull ? label.style_label_down : label.style_label_up, size=size.small)
+
+        if show_alt_wave
+            string alt_lbl_txt = draw_is_bull ? "💥 АЛЬТЕРНАТИВА (Слом SL " + str.tostring(fc_invalid_level, "#.##") + ") ➔ Уровень Дампа: " + str.tostring(alt_y3, "#.##") : "🚀 АЛЬТЕРНАТИВА (Слом SL " + str.tostring(fc_invalid_level, "#.##") + ") ➔ Уровень Пампа: " + str.tostring(alt_y3, "#.##")
+            color alt_txt_col = draw_is_bull ? c_bear : c_bull
+            label_alt_desc := label.new(fc_post_target ? alt_x4 : alt_x3, fc_post_target ? alt_y4 : alt_y3, alt_lbl_txt, color=color.new(color.black, 100), textcolor=alt_txt_col, style=draw_is_bull ? label.style_label_down : label.style_label_up, size=size.small)
+
+plotshape(buy_sig, title="S&T LONG Signal", style=shape.triangleup, location=location.belowbar, color=c_bull, size=size.normal, text="LONG", textcolor=color.black)
+plotshape(sell_sig, title="S&T SHORT Signal", style=shape.triangledown, location=location.abovebar, color=c_bear, size=size.normal, text="SHORT", textcolor=color.black)
+
+plotshape(show_sweeps and is_high_sweep, title="S&T High Liquidity Sweep", style=shape.triangledown, location=location.abovebar, color=color.orange, size=size.small, text="⚡ SWEEP", textcolor=color.orange)
+plotshape(show_sweeps and is_low_sweep, title="S&T Low Liquidity Sweep", style=shape.triangleup, location=location.belowbar, color=color.orange, size=size.small, text="⚡ SWEEP", textcolor=color.orange)
+
+trend_line_col = close > trend_line_val ? color.new(c_bull, 15) : color.new(c_bear, 15)
+plot(show_trend_l ? trend_line_val : na, title="S&T Dynamic Trend Line", color=trend_line_col, linewidth=3, style=plot.style_line)
+
+var table t_dash = na
+
+rsi_w = request.security(syminfo.tickerid, "W", rsi_val)
+rsi_m = request.security(syminfo.tickerid, "M", rsi_val)
+
+dxy_close  = request.security(dxy_symbol, timeframe.period, close, ignore_invalid_symbol=true)
+dxy_open   = request.security(dxy_symbol, timeframe.period, open, ignore_invalid_symbol=true)
+dxy_change = not na(dxy_open) and dxy_open > 0 ? (dxy_close - dxy_open) / dxy_open * 100 : 0.0
+oil_close  = request.security(oil_symbol, timeframe.period, close, ignore_invalid_symbol=true)
+oil_open   = request.security(oil_symbol, timeframe.period, open, ignore_invalid_symbol=true)
+oil_change = not na(oil_open) and oil_open > 0 ? (oil_close - oil_open) / oil_open * 100 : 0.0
+is_macro_anom = math.abs(dxy_change) >= 0.3 or math.abs(oil_change) >= 0.8
+
+if barstate.islast and show_tables
+    t_sz = get_text_size(text_sz_opt)
+    
+    if compact_mode
+        t_dash := table.new(get_table_pos(table_pos), columns=3, rows=11, bgcolor=c_bg_panel, border_color=color.new(c_neutral, 60), border_width=1)
+        
+        table.cell(t_dash, 0, 0, "ТФ", text_color=c_text_panel, text_size=t_sz, bgcolor=color.new(c_neutral, 30))
+        table.cell(t_dash, 1, 0, "Тренд", text_color=c_text_panel, text_size=t_sz, bgcolor=color.new(c_neutral, 30))
+        table.cell(t_dash, 2, 0, "Дельта / Вероятность", text_color=c_text_panel, text_size=t_sz, bgcolor=color.new(c_neutral, 30))
+        
+        table.cell(t_dash, 0, 1, "5м", text_color=c_text_panel, text_size=t_sz)
+        table.cell(t_dash, 1, 1, dot_5, text_size=t_sz)
+        table.cell(t_dash, 2, 1, (delta_current > 0 ? "🟢 +" : "🔴 ") + str.tostring(delta_current / 1000.0, "#.#") + "K", text_color=delta_current > 0 ? c_bull : c_bear, text_size=t_sz)
+        
+        table.cell(t_dash, 0, 2, "15м", text_color=c_text_panel, text_size=t_sz)
+        table.cell(t_dash, 1, 2, dot_15, text_size=t_sz)
+        table.cell(t_dash, 2, 2, str.tostring(prob_ote) + "% Отскок", text_color=c_bull, text_size=t_sz)
+        
+        table.cell(t_dash, 0, 3, "1ч", text_color=c_text_panel, text_size=t_sz)
+        table.cell(t_dash, 1, 3, dot_60, text_size=t_sz)
+        table.cell(t_dash, 2, 3, "RSI: " + str.tostring(rsi_val, "#") + "%", text_color=c_text_panel, text_size=t_sz)
+        
+        table.cell(t_dash, 0, 4, "4ч", text_color=c_text_panel, text_size=t_sz)
+        table.cell(t_dash, 1, 4, dot_240, text_size=t_sz)
+        table.cell(t_dash, 2, 4, trend_state == "bullish" ? "🟢 БЫЧИЙ SMC" : "🔴 МЕДВЕЖИЙ SMC", text_size=t_sz)
+        
+        table.cell(t_dash, 0, 5, "1Д", text_color=c_text_panel, text_size=t_sz)
+        table.cell(t_dash, 1, 5, dot_D, text_size=t_sz)
+        table.cell(t_dash, 2, 5, "OTE: " + str.tostring(prob_ote) + "%", text_color=c_bull, text_size=t_sz)
+        
+        table.cell(t_dash, 0, 6, "2Д", text_color=c_text_panel, text_size=t_sz)
+        table.cell(t_dash, 1, 6, dot_2D, text_size=t_sz)
+        table.cell(t_dash, 2, 6, "RSI W: " + str.tostring(rsi_w, "#") + "%", text_color=c_text_panel, text_size=t_sz)
+        
+        table.cell(t_dash, 0, 7, "1Н", text_color=c_text_panel, text_size=t_sz)
+        table.cell(t_dash, 1, 7, dot_W, text_size=t_sz)
+        table.cell(t_dash, 2, 7, "S&T Сигнал: " + (buy_sig ? "🟢 LONG" : sell_sig ? "🔴 SHORT" : "⚪ ЖДЕМ"), text_size=t_sz)
+        
+        table.cell(t_dash, 0, 8, "S&T PRO", text_color=c_bull, text_size=t_sz, bgcolor=color.new(c_neutral, 30))
+        table.cell(t_dash, 1, 8, "RSI M: " + str.tostring(rsi_m, "#") + "%", text_color=c_text_panel, text_size=t_sz, bgcolor=color.new(c_neutral, 30))
+        table.cell(t_dash, 2, 8, "SMC: " + (trend_state == "bullish" ? "UP" : "DOWN"), text_color=trend_state == "bullish" ? c_bull : c_bear, text_size=t_sz, bgcolor=color.new(c_neutral, 30))
+        
+        table.cell(t_dash, 0, 9, "⚙️ ПРЕСЕТ: " + preset_sel, text_color=c_bull, text_size=t_sz, bgcolor=color.new(c_neutral, 20), text_halign=text.align_center)
+        table.merge_cells(t_dash, 0, 9, 2, 9)
+        
+        table.cell(t_dash, 0, 10, is_macro_anom ? "⚠️ МАКРО АНОМАЛИЯ (DXY " + str.tostring(dxy_change, "+#.##") + "% | OIL " + str.tostring(oil_change, "+#.##") + "%)" : "🟢 МАКРО-ФОН: СТАБИЛЕН (DXY " + str.tostring(dxy_change, "+#.##") + "%)", text_color=is_macro_anom ? c_extreme_bear : c_bull, text_size=t_sz, bgcolor=color.new(c_neutral, 25), text_halign=text.align_center)
+        table.merge_cells(t_dash, 0, 10, 2, 10)
+        
+    else
+        t_dash := table.new(get_table_pos(table_pos), columns=6, rows=12, bgcolor=c_bg_panel, border_color=color.new(c_neutral, 60), border_width=1)
+        
+        table.cell(t_dash, 0, 0, "★ S&T PREMIUM ULTIMATE SUPER DASHBOARD v6 ★", text_color=c_bull, text_size=t_sz, bgcolor=color.new(#0f172a, 10), text_halign=text.align_center)
+        table.merge_cells(t_dash, 0, 0, 5, 0)
+        
+        table.cell(t_dash, 0, 1, "Таймфрейм", text_color=c_text_panel, text_size=t_sz, bgcolor=color.new(c_neutral, 30))
+        table.cell(t_dash, 1, 1, "EMA Тренд", text_color=c_text_panel, text_size=t_sz, bgcolor=color.new(c_neutral, 30))
+        table.cell(t_dash, 2, 1, "SMC Структура", text_color=c_text_panel, text_size=t_sz, bgcolor=color.new(c_neutral, 30))
+        table.cell(t_dash, 3, 1, "Volume Delta (Smoothed)", text_color=c_text_panel, text_size=t_sz, bgcolor=color.new(c_neutral, 30))
+        table.cell(t_dash, 4, 1, "Вероятность Отскока", text_color=c_text_panel, text_size=t_sz, bgcolor=color.new(c_neutral, 30))
+        table.cell(t_dash, 5, 1, "Рекомендация S&T", text_color=c_text_panel, text_size=t_sz, bgcolor=color.new(c_neutral, 30))
+        
+        table.cell(t_dash, 0, 2, "5м", text_color=c_text_panel, text_size=t_sz)
+        table.cell(t_dash, 1, 2, dot_5, text_size=t_sz)
+        table.cell(t_dash, 2, 2, "ST Pivot", text_color=c_neutral, text_size=t_sz)
+        table.cell(t_dash, 3, 2, (delta_current > 0 ? "+" : "") + str.tostring(delta_current / 1000.0, "#.#") + "K", text_color=delta_current > 0 ? c_bull : c_bear, text_size=t_sz)
+        table.cell(t_dash, 4, 2, str.tostring(prob_ote) + "%", text_color=c_text_panel, text_size=t_sz)
+        table.cell(t_dash, 5, 2, buy_sig ? "🟢 ВХОД LONG" : sell_sig ? "🔴 ВХОД SHORT" : "⚪ Вне рынка", text_color=buy_sig ? c_bull : sell_sig ? c_bear : c_neutral, text_size=t_sz)
+        
+        table.cell(t_dash, 0, 3, "15м", text_color=c_text_panel, text_size=t_sz)
+        table.cell(t_dash, 1, 3, dot_15, text_size=t_sz)
+        table.cell(t_dash, 2, 3, "ST / IT Pivot", text_color=c_neutral, text_size=t_sz)
+        table.cell(t_dash, 3, 3, (delta_smoothed > 0 ? "+" : "") + str.tostring(delta_smoothed / 1000.0, "#.#") + "K EMA", text_color=delta_smoothed > 0 ? c_bull : c_bear, text_size=t_sz)
+        table.cell(t_dash, 4, 3, str.tostring(prob_ote + 5) + "%", text_color=c_text_panel, text_size=t_sz)
+        table.cell(t_dash, 5, 3, trend_state == "bullish" ? "🟢 БЫЧИЙ НАПРАВЛ" : "🔴 МЕДВЕЖИЙ НАПРАВЛ", text_color=trend_state == "bullish" ? c_bull : c_bear, text_size=t_sz)
+        
+        table.cell(t_dash, 0, 4, "1ч", text_color=c_text_panel, text_size=t_sz)
+        table.cell(t_dash, 1, 4, dot_60, text_size=t_sz)
+        table.cell(t_dash, 2, 4, "IT Break: " + (trend_state == "bullish" ? "BOS UP" : "BOS DOWN"), text_color=trend_state == "bullish" ? c_bull : c_bear, text_size=t_sz)
+        table.cell(t_dash, 3, 4, str.tostring(delta_mtf_smooth / 1000.0, "#.#") + "K MTF", text_color=delta_mtf_smooth > 0 ? c_bull : c_bear, text_size=t_sz)
+        table.cell(t_dash, 4, 4, "RSI: " + str.tostring(rsi_val, "#.#") + "%", text_color=rsi_val > 70 ? c_bear : rsi_val < 30 ? c_bull : c_text_panel, text_size=t_sz)
+        table.cell(t_dash, 5, 4, "Ожидание объемов", text_color=c_neutral, text_size=t_sz)
+        
+        table.cell(t_dash, 0, 5, "4ч", text_color=c_text_panel, text_size=t_sz)
+        table.cell(t_dash, 1, 5, dot_240, text_size=t_sz)
+        table.cell(t_dash, 2, 5, "IT / LT Pivot", text_color=c_neutral, text_size=t_sz)
+        table.cell(t_dash, 3, 5, "CVD Накопление", text_color=c_text_panel, text_size=t_sz)
+        table.cell(t_dash, 4, 5, "OTE: " + str.tostring(prob_ote) + "%", text_color=c_bull, text_size=t_sz)
+        table.cell(t_dash, 5, 5, "Сильное удержание", text_color=c_bull, text_size=t_sz)
+        
+        table.cell(t_dash, 0, 6, "1Д", text_color=c_text_panel, text_size=t_sz)
+        table.cell(t_dash, 1, 6, dot_D, text_size=t_sz)
+        table.cell(t_dash, 2, 6, "LT Break Structure", text_color=c_neutral, text_size=t_sz)
+        table.cell(t_dash, 3, 6, "D1 Trend Positive", text_color=c_bull, text_size=t_sz)
+        table.cell(t_dash, 4, 6, "90.2% Накопление", text_color=c_bull, text_size=t_sz)
+        table.cell(t_dash, 5, 6, "Глобальный Тренд UP", text_color=c_bull, text_size=t_sz)
+        
+        table.cell(t_dash, 0, 7, "2Д", text_color=c_text_panel, text_size=t_sz)
+        table.cell(t_dash, 1, 7, dot_2D, text_size=t_sz)
+        table.cell(t_dash, 2, 7, "Macro Pivot", text_color=c_neutral, text_size=t_sz)
+        table.cell(t_dash, 3, 7, "W1 Delta High", text_color=c_bull, text_size=t_sz)
+        table.cell(t_dash, 4, 7, "RSI W: " + str.tostring(rsi_w, "#.#") + "%", text_color=c_text_panel, text_size=t_sz)
+        table.cell(t_dash, 5, 7, "Глобальный спрос", text_color=c_bull, text_size=t_sz)
+        
+        table.cell(t_dash, 0, 8, "1Н", text_color=c_text_panel, text_size=t_sz)
+        table.cell(t_dash, 1, 8, dot_W, text_size=t_sz)
+        table.cell(t_dash, 2, 8, "Weekly Trend", text_color=c_text_panel, text_size=t_sz)
+        table.cell(t_dash, 3, 8, "High Volume", text_color=c_text_panel, text_size=t_sz)
+        table.cell(t_dash, 4, 8, "RSI M: " + str.tostring(rsi_m, "#.#") + "%", text_color=c_text_panel, text_size=t_sz)
+        table.cell(t_dash, 5, 8, "Удержание Тренда", text_color=c_bull, text_size=t_sz)
+        
+        table.cell(t_dash, 0, 9, "⚙️ АКТИВНЫЙ ПРЕСЕТ: " + preset_sel + " (Переключается в настройках индикатора ⚙️)", text_color=c_bull, text_size=t_sz, bgcolor=color.new(c_neutral, 30), text_halign=text.align_center)
+        table.merge_cells(t_dash, 0, 9, 5, 9)
+        
+        table.cell(t_dash, 0, 10, "SMC ТРЕНД: " + (trend_state == "bullish" ? "🟢 БЫЧИЙ (BULLISH)" : "🔴 МЕДВЕЖИЙ (BEARISH)") + " | RSI: " + str.tostring(rsi_val, "#.#") + "% | ДЕЛЬТА ОБЪЕМА: " + (delta_current > 0 ? "🟢 БЫКИ ЛИДИРУЮТ" : "🔴 МЕДВЕДИ ДАВЯТ"), text_color=c_text_panel, text_size=t_sz, bgcolor=color.new(c_neutral, 20), text_halign=text.align_center)
+        table.merge_cells(t_dash, 0, 10, 5, 10)
+
+        table.cell(t_dash, 0, 11, is_macro_anom ? "⚠️ МАКРО-ПРЕДУПРЕЖДЕНИЕ: Внешние рынки в движении! DXY " + str.tostring(dxy_change, "+#.##") + "% | Brent Нефть " + str.tostring(oil_change, "+#.##") + "%" : "🌐 Внешние макро-рынки стабильны (DXY " + str.tostring(dxy_change, "+#.##") + "% | Brent " + str.tostring(oil_change, "+#.##") + "%)", text_color=is_macro_anom ? c_extreme_bear : c_bull, text_size=t_sz, bgcolor=color.new(#0f172a, 20), text_halign=text.align_center)
+        table.merge_cells(t_dash, 0, 11, 5, 11)
+
+alertcondition(buy_sig, "S&T LONG СИГНАЛ", "Сработал LONG Сигнал на S&T Super Indicator!")
+alertcondition(sell_sig, "S&T SHORT СИГНАЛ", "Сработал SHORT Сигнал на S&T Super Indicator!")
+alertcondition(is_choch, "Слом Характера CHoCH", "Произошел слом характера тренда CHoCH!")
+alertcondition(is_bos, "Слом Структуры BOS", "Произошел слом структуры тренда BOS!")
